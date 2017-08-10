@@ -14,6 +14,9 @@ local c = require 'trepl.colorize'
 local string = require 'string'
 require 'sort'
 
+local dataTrain = torch.load('annotations/instances_train2014.tds.t7')
+local dataVal = torch.load('annotations/instances_val2014.tds.t7')
+
 local dataset = torch.class('dataLoader')
 
 local initcheck = argcheck{
@@ -40,11 +43,6 @@ local initcheck = argcheck{
    {name="sampleSize",
     type="table",
     help="a consistent sample size to resize the images"},
-
-   {name="split",
-    type="number",
-    help="Percentage of split to go to Training"
-   },
 
    {name="samplingMode",
     type="string",
@@ -98,80 +96,98 @@ function dataset:__init(...)
    -- find class names
    print('finding class names')
    self.classes = tds.Hash()
-   local classPaths = tds.Hash()
    self.classes_cnt = 0
-   if self.forceClasses then
-      print('Adding forceClasses class names')
-      for k,v in pairsByKeys(self.forceClasses) do
-         self.classes[self.classes_cnt + 1] = k
-	 self.classes_cnt = self.classes_cnt + 1 
-      end
+   for _,v in pairs(dataTrain['categories']) do
+     self.classes[v['id']] = v['name']
+	   self.classes_cnt = self.classes_cnt + 1 
    end
 
-   -- modified loop over each paths folder, get list of unique class names
-   print('Adding all path folders')
-   for k,_ in pairsByKeys(self.forceClasses) do
-      dirpath = self.paths[1] .. k .. '/'
-      classPaths[k] = dirpath
-   end
    print(self.classes_cnt .. ' class names found')
    self.classIndices = tds.Hash()
-   for k,v in pairsByKeys(self.classes) do
+   for k,v in pairs(self.classes) do
       self.classIndices[v] = k
    end
 
    -- find the image path names
    print('Finding path for each image')
-   self.imagePath = torch.CharTensor()  -- path to each image in dataset
-   self.imageClass = torch.LongTensor() -- class index of each image (class index in self.classes)
+   self.imagePathTrain = torch.CharTensor()  -- path to each image in dataset
+   self.imageClassTrain = torch.LongTensor() -- class index of each image (class index in self.classes)
    self.classList = tds.Hash()          -- index of imageList to each image of a particular class
    self.classListSample = self.classList -- the main list used when sampling data
-   local counts = tds.Hash()
-   local maxPathLength = 0
+   local countsTrain = tds.Hash()
+   local maxPathLengthTrain = 0
 
    print('Calculating maximum class name length and counting files')
-   local length = 0
-
-   local fullPaths = tds.Hash()
-   local fullPathsSize = 0
-   -- iterate over classPaths
-   for _,path in pairsByKeys(classPaths) do
-    local count = 0
-      -- iterate over files in the class path
-      for f in paths.iterfiles(path) do
-        local fullPath = path .. '/' .. f
-        maxPathLength = math.max(fullPath:len(), maxPathLength)
-        count = count + 1
-        length = length + 1
-        fullPaths[fullPathsSize + 1] = fullPath
-	fullPathsSize = fullPathsSize + 1
-      end
-      counts[path] = count
+   local lengthTrain = 0
+   local fullPathsTrain = tds.Hash()
+   local fullPathsSizeTrain = 0
+   
+   for k,v in pairs(dataTrain['images']) do
+     local count = 0
+     local folderPath = opt.data .. 'train2014/'
+     local fullPath = folderPath .. v['file_name']
+     maxPathLengthTrain = math.max(fullPath:len(), maxPathLengthTrain)
+     count = count + 1
+     lengthTrain = lengthTrain + 1
+     fullPathsTrain[fullPathsSizeTrain + 1] = fullPath
+	   fullPathsSizeTrain = fullPathsSizeTrain + 1
+     countsTrain[v] = count
    end
 
-   assert(length > 0, "Could not find any image file in the given input paths")
-   assert(maxPathLength > 0, "paths of files are length 0?")
-   maxPathLength = maxPathLength + 1
-   self.imagePath:resize(length, maxPathLength):fill(0)
-   local s_data = self.imagePath:data()
+   assert(lengthTrain > 0, "Could not find any image file in the given input paths")
+   assert(maxPathLengthTrain > 0, "paths of files are length 0?")
+   maxPathLengthTrain = maxPathLengthTrain + 1
+   self.imagePathTrain:resize(lengthTrain, maxPathLengthTrain):fill(0)
+   local s_data = self.imagePathTrain:data()
    local count = 0
-   for i,line in pairsByKeys(fullPaths) do
+   for i,line in pairs(fullPathsTrain) do
      ffi.copy(s_data, line)
-     s_data = s_data + maxPathLength
+     s_data = s_data + maxPathLengthTrain
      if self.verbose and count % 10000 == 0 then
-        xlua.progress(count, length)
-     end;
+        xlua.progress(count, lengthTrain)
+     end
      count = count + 1
    end
-   self.numSamples = self.imagePath:size(1)
-   if self.verbose then print(self.numSamples ..  ' samples found.') end
+   self.numSamplesTrain = self.imagePathTrain:size(1)
+   if self.verbose then print(self.numSamplesTrain ..  ' training samples found.') end
+
+   self.idToClassTrain = tds.Hash()
+   self.idToBboxTrain = tds.Hash()
+   for _,v in pairs(dataTrain['annotations']) do
+     self.idToClassTrain[v['image_id']] = v['category_id']
+     self.idToBboxTrain[v['image_id']] = v['bbox']
+   end
+
+   self.idToSizeTrain = tds.Hash()
+   self.idToPathTrain = tds.Hash()
+   for _,v in pairs(dataTrain['images']) do
+     local folderPath = opt.data .. 'train2014/'
+     self.idToSizeTrain[v['id']] = {v['width'],v['height']}
+     self.idToPathTrain[v['id']] = folderPath .. v['file_name']
+   end
+
+   self.classToPathTrain = tds.Hash()
+   self.classToIdTrain = tds.Hash()
+   local classIdsTableTrain = {}
+   for k,v in pairs(self.idToClassTrain) do
+     self.classToIdTrain[v] = k
+   end
+
+   local 
+   for k,v in pairs(self.classToIdTrain) do
+     self.classToPathTrain[k] = self.idToPathTrain[v]
+   end
+
+
+
+
    --==========================================================================
    print('Updating classList and imageClass appropriately')
-   self.imageClass:resize(self.numSamples)
+   self.imageClassTrain:resize(self.numSamplesTrain)
    local runningIndex = 0
    for i=1, self.classes_cnt do
 	  if self.verbose then xlua.progress(i, self.classes_cnt) end
-      local clsLength = counts[classPaths[self.classes[i]]]
+      local clsLength = countsTrain[classPaths[self.classes[i]]]
       if clsLength == 0 then
          error('Class has zero samples: ' .. self.classes[i])
       else
@@ -307,8 +323,8 @@ end
 
 -- getByClass
 function dataset:getByClass(classId)
-   local index = math.ceil(torch.uniform() * self.classListSample[classId]:nElement())
-   local imgpath = ffi.string(torch.data(self.imagePath[self.classListSample[classId][index]]))
+   local index = math.ceil(torch.uniform() * self.classToPaths[classId]:nElement())
+   local imgpath = ffi.string(torch.data(self.imagePath[self.classToPaths[classId][index]]))
    return self:sampleHookTrain(imgpath)
 end
 
@@ -357,7 +373,7 @@ function dataset:sample(quantity)
    return data, scalarLabels
 end
 
-function dataset:get(i1, i2, pTest)
+function dataset:get(i1, i2, pVal)
    local indices, quantity
    if type(i1) == 'number' then
       if type(i2) == 'number' then -- range of indices
@@ -383,7 +399,7 @@ function dataset:get(i1, i2, pTest)
       -- load the sample
       local idx = self.testIndices[indices[i]]
       local imgpath = ffi.string(torch.data(self.imagePath[idx]))
-      local out = self:sampleHookTest(imgpath, pTest)
+      local out = self:sampleHookTest(imgpath, pVal)
       table.insert(dataTable, out)
       table.insert(scalarTable, self.imageClass[idx])
       dataTableSize = dataTableSize + 1

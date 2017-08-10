@@ -11,7 +11,7 @@ local M = { }
 function M.parse(arg)
     local cmd = torch.CmdLine()
     cmd:text()
-    cmd:text('Torch-7 Imagenet Training script')
+    cmd:text('Torch-7 YOLO Training script')
     cmd:text()
     cmd:text('Options:')
     ------------ General options --------------------
